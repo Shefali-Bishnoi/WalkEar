@@ -1,11 +1,19 @@
 # WalkEar – re-implementation (earable gait monitoring)
 
-Implements the full pipeline of *"WalkEar: Holistic Gait Monitoring using Earables"*:
-orientation calibration → head-motion removal → HS/TO + left/right detection → temporal & spatial
-parameters → kinetic parameters (GP) → vGRF curve (gradient boosting) → asymmetry → LOSO evaluation.
+## Reference Paper
 
-The original dataset/code are not public, so `data/raw/` contains **synthetic data in the exact format
-the real data must follow**. Replace it, run two commands, everything downstream works.
+This project is based on the research paper
+[*WalkEar: Holistic Gait Monitoring using Earables*](https://mobile-systems.cl.cam.ac.uk/papers/walkear.pdf),
+published at IEEE PerCom 2025.
+
+### Setup Virtual Environment (Python 3.11)
+
+```powershell
+cd WalkEar
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
 
 ## Quick start
 ```bash
