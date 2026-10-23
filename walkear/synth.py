@@ -23,6 +23,11 @@ from scipy.spatial.transform import Rotation
 FS_SIM = 1000.0
 PRELUDE_S = 4.0          # standing still at the start (used for orientation calibration)
 KAPPA = 0.10             # head-to-CoM coupling of vertical acceleration
+SENSOR_DLPF_HZ = 44.0    # MPU6050 on-chip digital low-pass (anti-aliasing) before ~100 Hz sampling
+ACC_NOISE_G = 0.006      # white accelerometer noise (G); MPU6050 datasheet ~0.004 G over 75 Hz
+GT_F_LO_HZ = 0.3         # lower band edge of the ground-truth CoM displacement
+MOCAP_NOISE_MM = 0.10    # marker noise on the ground-truth CoM height (mm)
+IMPACT_G = 0.22          # heel-strike transient amplitude at the ear (G)
 HEAD_LEAD_S = 0.07       # phase of the head's vertical acceleration relative to the force sum
                          # (tuned so the paper's 2 Hz jerk-trough TO heuristic is unbiased)
 
@@ -33,6 +38,36 @@ def _lp(x, fc, fs=FS_SIM, order=4):
 
 def _hp(x, fc, fs=FS_SIM, order=2):
     b, a = butter(order, fc / (fs / 2), btype="high"); return filtfilt(b, a, x)
+
+
+def _double_integrate_spectral(acc, fs, f_lo=0.3):
+    """Exact double integration in the frequency domain for components above f_lo.
+    Avoids the quadratic drift that time-domain integration of a nearly-zero-mean signal creates."""
+    n = len(acc)
+    A = np.fft.rfft(acc)
+    f = np.fft.rfftfreq(n, 1.0 / fs)
+    Z = np.zeros_like(A)
+    m = f >= f_lo
+    Z[m] = -A[m] / (2 * np.pi * f[m]) ** 2
+    return np.fft.irfft(Z, n)
+
+
+def _impact_template(fs=FS_SIM, dur=0.3, f=12.0, tau=0.04, rise=0.004):
+    """Heel-strike shock at the ear: damped ringing, normalised to max |a| = 1.
+    Built as the 2nd derivative of a smooth bump x(k) that starts and ends at rest, so BOTH its
+    net velocity and net displacement are ~0 (a real shock does not permanently move the head,
+    and a plain damped sine would inject spurious displacement into the vertical-displacement
+    estimate that the ground truth does not contain)."""
+    k = np.arange(0, 1.0, 1.0 / fs)                      # compute on 1 s, keep the first `dur`
+    x = np.exp(-k / tau) * np.sin(2 * np.pi * f * k) * (1 - np.exp(-k / rise)) ** 3
+    # exact DISCRETE second difference: two cumulative sums give x back, so the template's net
+    # velocity and net displacement are zero by construction (up to the 0.3 s truncation)
+    a = np.diff(x, n=2, prepend=[0.0, 0.0]) * fs ** 2
+    a = a[:int(dur * fs)]
+    return a / np.abs(a).max()
+
+
+IMPACT_TEMPLATE = _impact_template()
 
 
 def _edge(x, w_in=0.04, w_out=0.10):
@@ -120,7 +155,9 @@ def simulate_trial(rng, subj, speed_kph, duration_s, surface):
     walk = (t > hs[0] - 0.2) & (t < t_end)
     Fc = np.zeros(n)
     Ftot_lead = np.interp(t + HEAD_LEAD_S, t, Ftot)
-    Fc[walk] = _lp(Ftot_lead - Ftot_lead[walk].mean(), 15.0)[walk]
+    # Newton: over a stride the mean vertical force equals body weight, so the CoM has no net
+    # vertical acceleration below the stride frequency -> remove content < 0.6 Hz.
+    Fc[walk] = _hp(_lp(Ftot_lead - Ftot_lead[walk].mean(), 15.0), 0.6)[walk]
     gate = np.clip((t - (hs[0] - 0.3)) / 0.3, 0, 1)
     a_vt_base = 1.0 + KAPPA * Fc * gate
 
@@ -129,11 +166,10 @@ def simulate_trial(rng, subj, speed_kph, duration_s, surface):
         i0 = int(hs[j] * FS_SIM)
         if i0 >= n - 200:
             break
-        k = np.arange(0, min(300, n - i0)) / FS_SIM
-        amp = 0.22 * (A1[j] / 1.1) * (0.11 / w1[j])
-        tr = np.exp(-k / 0.04) * np.sin(2 * np.pi * 12 * k)
-        imp_v[i0:i0 + len(k)] += amp * tr
-        imp_ap[i0:i0 + len(k)] += -0.5 * amp * tr
+        tr = IMPACT_TEMPLATE[:n - i0]
+        amp = IMPACT_G * (A1[j] / 1.1) * (0.11 / w1[j])
+        imp_v[i0:i0 + len(tr)] += amp * tr
+        imp_ap[i0:i0 + len(tr)] += -0.5 * amp * tr
 
     ph_t = np.r_[hs, hs[-1] + 1.0]
     ph_v = np.r_[np.pi * np.arange(n_steps), np.pi * n_steps]
@@ -167,10 +203,12 @@ def simulate_trial(rng, subj, speed_kph, duration_s, surface):
         a = np.column_stack([a_ap_base + gain * imp_ap,
                              sign * a_lat + 0.25 * gain * imp_v * sign * 0.3 + acc_dist[:, 1],
                              a_vt_base + gain * imp_v])
-        a += rng.normal(0, 0.012, a.shape)
+        a += rng.normal(0, ACC_NOISE_G, a.shape)
         g = gyro_anat + rng.normal(0, 0.03, gyro_anat.shape)
         R = Rotation.from_euler("zyx", np.deg2rad([rng.normal(0, 6), rng.normal(0, 18), rng.normal(0, 18)]))
         a_dev, g_dev = R.inv().apply(a), R.inv().apply(g)
+        a_dev = np.column_stack([_lp(a_dev[:, k], SENSOR_DLPF_HZ) for k in range(3)])
+        g_dev = np.column_stack([_lp(g_dev[:, k], SENSOR_DLPF_HZ) for k in range(3)])
         a_dev = np.clip(a_dev, -2, 2); g_dev = np.clip(g_dev, -np.deg2rad(250), np.deg2rad(250))
         dt = 0.01 * (1 + rng.normal(0, 0.08, int(t_end * 105)))
         ts = np.cumsum(np.clip(dt, 0.004, 0.03)) + rng.uniform(0, 0.02)
@@ -201,10 +239,9 @@ def simulate_trial(rng, subj, speed_kph, duration_s, surface):
     mocap = None
     if surface == "treadmill":
         acc = KAPPA * Fc * gate * 9.81
-        z = cumulative_trapezoid(cumulative_trapezoid(acc, dx=1 / FS_SIM, initial=0), dx=1 / FS_SIM, initial=0)
-        z = _hp(z, 0.3) * 1000.0
+        z = _double_integrate_spectral(acc, FS_SIM, f_lo=GT_F_LO_HZ) * 1000.0     # mm, no integration drift
         tm = np.arange(0, t_end, 0.01)
-        zm = np.interp(tm, t, z) * (1 + rng.normal(0, 0.05)) + rng.normal(0, 0.25, len(tm))
+        zm = np.interp(tm, t, z) + rng.normal(0, MOCAP_NOISE_MM, len(tm))      # marker noise only
         mocap = pd.DataFrame({"time_s": tm, "com_z_mm": zm})
     return streams, force, mocap
 

@@ -21,7 +21,7 @@ def run_imu_pipeline(trial, fs=C.FS):
 
     n_feat = 2 * 11
     cols = ["participant", "trial", "step_i", "side", "hs_t", "to_t", "step_time", "stride",
-            "stance", "swing", "cadence", "vd_mm", "head_motion", "seg_valid"]
+            "stance", "swing", "cadence", "vd_mm", "head_motion", "edge_step", "seg_valid"]
     if len(ev.hs_t) < 4:
         return pd.DataFrame(columns=cols), np.empty((0, n_feat)), np.empty((0, n_feat))
 
@@ -31,6 +31,7 @@ def run_imu_pipeline(trial, fs=C.FS):
     ag_r = lowpass(resultant(ar_c), 30.0, fs)
 
     hs, side, to_after = ev.hs_t, ev.hs_side, ev.to_after
+    t_first, t_last = hs[0], hs[-1]
     lo, hi = C.STEP_TIME_RANGE_S
     rows, XL, XS = [], [], []
     for i in range(len(hs) - 2):
@@ -42,7 +43,9 @@ def run_imu_pipeline(trial, fs=C.FS):
         row = dict(participant=trial.participant, trial=trial.name, step_i=i, side=int(side[i]),
                    hs_t=hs[i], to_t=to_same if ok else np.nan, step_time=np.nan, stride=np.nan,
                    stance=np.nan, swing=np.nan, cadence=np.nan, vd_mm=np.nan,
-                   head_motion=False, seg_valid=bool(ok))
+                   head_motion=False, seg_valid=bool(ok),
+                   # start-up / stop transients: the 0.3 Hz high-pass chain has not settled
+                   edge_step=bool(hs[i] - t_first < C.VD_EDGE_S or t_last - hs[i + 2] < C.VD_EDGE_S))
         if ok:
             stride = hs[i + 2] - hs[i]
             stance = to_same - hs[i]

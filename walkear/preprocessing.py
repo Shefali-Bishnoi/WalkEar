@@ -5,20 +5,23 @@ and the same code runs unchanged on new raw data.
 """
 from __future__ import annotations
 import numpy as np
-from scipy.signal import butter, filtfilt
+from scipy.signal import butter, sosfiltfilt
 from scipy.spatial.transform import Rotation
 from . import config as C
 
 
 # ---------------------------------------------------------------- filtering
-def lowpass(x, fc, fs, order=4):
-    b, a = butter(order, fc / (fs / 2), btype="low")
-    return filtfilt(b, a, x, axis=0)
+def lowpass(x, fc, fs, order=4, padlen=None):
+    """Zero-phase Butterworth low-pass (second-order sections: stable for very low cutoffs)."""
+    sos = butter(order, fc / (fs / 2), btype="low", output="sos")
+    return sosfiltfilt(sos, x, axis=0, padlen=padlen)
 
 
-def highpass(x, fc, fs, order=2):
-    b, a = butter(order, fc / (fs / 2), btype="high")
-    return filtfilt(b, a, x, axis=0)
+def highpass(x, fc, fs, order=2, padlen=None):
+    """Zero-phase Butterworth high-pass. For very low cutoffs pass a large `padlen`
+    (samples): the default padding is far shorter than the filter's transient."""
+    sos = butter(order, fc / (fs / 2), btype="high", output="sos")
+    return sosfiltfilt(sos, x, axis=0, padlen=padlen)
 
 
 # --------------------------------------------------------------- resampling

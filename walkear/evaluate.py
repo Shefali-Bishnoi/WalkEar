@@ -55,6 +55,8 @@ def make_tables(out, pred_curve, CV100, curve_points=C.CURVE_POINTS):
     rows = []
     for c in est_cols:
         s = error_stats(m[c], m["gt_" + c]); s["parameter"] = c; rows.append(s)
+    mi = m[~m.edge_step]                              # vertical displacement away from recording edges
+    s = error_stats(mi["vd"], mi["gt_vd"]); s["parameter"] = "vd (excl. edge steps)"; rows.append(s)
     t2 = pd.DataFrame(rows).set_index("parameter")[["n", "MAE", "SDE", "MAPE", "ME"]]
 
     pairs = {c: (c, "gt_" + c) for c in ["stride", "stance", "swing"] + KIN}

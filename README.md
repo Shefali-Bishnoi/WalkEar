@@ -1,19 +1,13 @@
 # WalkEar – re-implementation (earable gait monitoring)
 
-## Reference Paper
+> **New to gait analysis / signal processing / these ML models?** Read `ProjectExplanation.md` first (a from-zero, ~2,900-line guide with figures in `docs/figures/`). `VD_Debugging.md` explains how the vertical-displacement error was reduced.
 
-This project is based on the research paper
-[*WalkEar: Holistic Gait Monitoring using Earables*](https://mobile-systems.cl.cam.ac.uk/papers/walkear.pdf),
-published at IEEE PerCom 2025.
+Implements the full pipeline of *"WalkEar: Holistic Gait Monitoring using Earables"*:
+orientation calibration → head-motion removal → HS/TO + left/right detection → temporal & spatial
+parameters → kinetic parameters (GP) → vGRF curve (gradient boosting) → asymmetry → LOSO evaluation.
 
-### Setup Virtual Environment (Python 3.11)
-
-```powershell
-cd WalkEar
-py -3.11 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-```
-
+The original dataset/code are not public, so `data/raw/` contains **synthetic data in the exact format
+the real data must follow**. Replace it, run two commands, everything downstream works.
 
 ## Quick start
 ```bash
@@ -71,14 +65,14 @@ data/raw/
   their outputs are replaced by the mean of the neighbouring clean steps of the same foot (as in the paper).
 * Kinetic targets are divided by body weight; predictions are multiplied by the user's weight (personalisation).
 * GP is O(n³): at most `GP_MAX_TRAIN` (=800) random training steps per scalar model. Raise it if you have the time.
-* All thresholds are in `config.py`; **expect to re-tune** `HS_REL_THRESH`, `HS_FIRST_LOBE_REL`, `STATIONARY_*` on real data
+* All thresholds are in `config.py`; **expect to re-tune** `HS_LOWPASS_HZ`, `HS_REL_THRESH`, `HS_FIRST_LOBE_REL`, `STATIONARY_*` on real data
   (see “Things to check on real data”).
 
 ## Honest caveats
 1. **Numbers on the synthetic data validate the code, not the paper.** The generator is physics-inspired (double-hump
    vGRF, head acceleration coupled to total force, impact transients tied to loading rate, random earbud tilt, gyro
    drift, head turns, jittered timestamps), but its force curves come from a low-dimensional parametric family, so
-   vGRF NRMSE (~2 %, corr 0.998) is far better than anything real data will give. Peak forces are ~1.3 BW (paper: ~1.15 BW).
+   vGRF NRMSE (~1.9 %, corr 0.999) is far better than anything real data will give. Peak forces are ~1.4 BW (paper: ~1.15 BW).
    The head's vertical-acceleration phase is tuned (`HEAD_LEAD_S`) so that the paper's TO heuristic is unbiased on it.
 2. The paper does not specify some details; my choices: LR = slope between 20 % and 80 % of the weight-acceptance
    peak; band power = 3–20 Hz; both ears' features are concatenated; HS = first strong jerk lobe (impacts ring);
@@ -92,6 +86,9 @@ Run `build_dataset.py` and read the per-trial printout: `seg_valid` should be �
 close to the number of steps on force plates. If not: (i) check sync (`FORCE_TIME_OFFSET_S`), (ii) plot jerk vs. force
 HS and adjust `HS_REL_THRESH`/`HS_FIRST_LOBE_REL`, (iii) check that the ML axis sign convention holds
 (outward-positive per ear after calibration; if left/right are swapped, flip `classify_sides`), (iv) check unit conversion.
+
+## Vertical displacement
+VD error was 16.9 % on the first version and is now 5.0 % (4.2 % excluding the first/last 3 s, which are flagged `edge_step`; paper: 2.72 %). The causes (several in the synthetic generator, two in the estimator: missing pre-integration low-pass and edge padding) are documented in `VD_Debugging.md`.
 
 ## Reference results on the shipped synthetic data (LOSO, 10 participants, 20-pt curve)
 See `results/table2_errors_loso.csv`, `table3_asymmetry_loso.csv`, `vgrf_loso_20.json`, `vgrf_examples_loso.png`.

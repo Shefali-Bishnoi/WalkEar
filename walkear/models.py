@@ -7,7 +7,9 @@ new user; predictions are re-scaled with the user's weight ("personalisation").
 Feature scaling is part of each sklearn Pipeline => fitted on training data only.
 """
 from __future__ import annotations
+import warnings
 import numpy as np
+from sklearn.exceptions import ConvergenceWarning
 from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel, Matern, WhiteKernel
@@ -59,7 +61,14 @@ class WalkEarKinetics:
             idx = np.where(ok)[0]
             if len(idx) > self.gp_max_train:
                 idx = rng.choice(idx, self.gp_max_train, replace=False)
-            self.gps[name] = _gp(X.shape[1]).fit(X[idx], y[idx])
+            with warnings.catch_warnings():
+                # Informational only: for some targets (e.g. loading rate on synthetic data) the GP learns
+                # a noise level at the lower bound, i.e. "this target is almost noise-free given the
+                # features". Raising the bound just moves the warning, so we silence exactly this message
+                # (other ConvergenceWarnings stay visible).
+                warnings.filterwarnings("ignore", category=ConvergenceWarning,
+                                        message=r".*close to the specified (lower|upper) bound.*")
+                self.gps[name] = _gp(X.shape[1]).fit(X[idx], y[idx])
         if self.fit_curve and curves_norm is not None:
             X = np.hstack([feats["loading"], feats["stance"]])
             Y = resample_curves(curves_norm, self.curve_points)

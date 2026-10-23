@@ -52,13 +52,18 @@ STATIONARY_WIN_S = 1.0
 STATIONARY_ACC_STD = 0.03        # G
 STATIONARY_GYRO_MAX = 0.4        # rad/s
 
-HS_LOWPASS_HZ = 25.0             # lowpass before computing the jerk for HS detection
+HS_LOWPASS_HZ = 45.0             # lowpass before computing the jerk for HS detection
 HS_MIN_DISTANCE_S = 0.30
 HS_REL_THRESH = 0.35             # peak must be >= this * (90th pct of candidate peaks)
-HS_FIRST_LOBE_REL = 0.6          # impact ringing: earliest jerk peak >= this * P90 within 0.1 s before the tallest
+HS_FIRST_LOBE_REL = 0.7          # impact ringing: earliest jerk peak >= this * P90 within 0.1 s before the tallest
 TO_LOWPASS_HZ = 2.0              # paper: Butterworth 2 Hz on jerk of a_vt
 SIDE_LOWPASS_HZ = 5.0            # paper: 5 Hz lowpass on (a_ml_left - a_ml_right)
 VD_HIGHPASS_HZ = 0.3             # high-pass used between integration stages
+MOCAP_LOWPASS_HZ = 6.0           # mocap is low-pass filtered before taking max-min (marker noise inflates peak-to-peak)
+VD_EDGE_S = 3.0                  # steps within this many s of the first/last detected step are flagged `edge_step`
+VD_PAD_S = 4.0                   # s of edge padding for the VD filters (avoid start/end artefacts)
+VD_LOWPASS_HZ = 5.0              # low-pass BEFORE integration: CoM motion is <~ 3 harmonics of the step
+                                 # frequency; heel-strike shocks must not leak into the displacement
 
 STEP_TIME_RANGE_S = (0.30, 1.00)  # sanity limits for a step (HS -> opposite HS)
 

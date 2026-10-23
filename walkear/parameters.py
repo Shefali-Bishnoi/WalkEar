@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 from scipy.integrate import cumulative_trapezoid
 from . import config as C
-from .preprocessing import highpass
+from .preprocessing import highpass, lowpass
 
 _trapz = getattr(np, "trapezoid", None) or np.trapz
 
@@ -54,6 +54,10 @@ def ground_truth_steps(trial, n_curve=C.CURVE_POINTS_GT):
     if not trial.has_force:
         return pd.DataFrame(), np.empty((0, n_curve))
     t = trial.force_t
+    mocap_z = trial.mocap_z_mm
+    if mocap_z is not None and len(mocap_z) > 20:
+        fm = 1.0 / np.median(np.diff(trial.mocap_t))
+        mocap_z = lowpass(mocap_z, C.MOCAP_LOWPASS_HZ, fm)      # standard mocap smoothing
     rows, curves = [], []
     stances = {0: detect_stances(t, trial.force_left), 1: detect_stances(t, trial.force_right)}
     forces = {0: trial.force_left, 1: trial.force_right}
@@ -80,7 +84,7 @@ def ground_truth_steps(trial, n_curve=C.CURVE_POINTS_GT):
         if trial.mocap_t is not None and opp is not None:
             m = (trial.mocap_t >= ths) & (trial.mocap_t < hs_times[opp])
             if m.sum() > 3:
-                z = trial.mocap_z_mm[m]
+                z = mocap_z[m]
                 vd = z.max() - z.min()
         row["vd_mm"] = vd
         x = (tt - tt[0]) / (tt[-1] - tt[0])
@@ -91,14 +95,20 @@ def ground_truth_steps(trial, n_curve=C.CURVE_POINTS_GT):
 
 # ============================================================ estimates
 def estimate_vertical_displacement(a_vt_g, fs):
-    """Double integration with a high-pass filter after every integration (paper Sec. III-C).
-    Returns displacement in mm."""
+    """Low-pass -> double integration with a high-pass after every integration (paper Sec. III-C).
+    Returns displacement in mm.
+    * the low-pass (VD_LOWPASS_HZ) removes heel-strike shocks/noise that would otherwise leak into
+      the displacement (double integration weights low frequencies by 1/f^4);
+    * all filters use long padding (VD_PAD_S) so the slow transients of a 0.3 Hz high-pass do not
+      corrupt the first / last steps of a recording."""
+    pad = min(int(C.VD_PAD_S * fs), len(a_vt_g) - 2)
     acc = (a_vt_g - np.mean(a_vt_g)) * 9.81
-    acc = highpass(acc, C.VD_HIGHPASS_HZ, fs)
+    acc = lowpass(acc, C.VD_LOWPASS_HZ, fs, padlen=pad)
+    acc = highpass(acc, C.VD_HIGHPASS_HZ, fs, padlen=pad)
     vel = cumulative_trapezoid(acc, dx=1 / fs, initial=0)
-    vel = highpass(vel, C.VD_HIGHPASS_HZ, fs)
+    vel = highpass(vel, C.VD_HIGHPASS_HZ, fs, padlen=pad)
     pos = cumulative_trapezoid(vel, dx=1 / fs, initial=0)
-    pos = highpass(pos, C.VD_HIGHPASS_HZ, fs)
+    pos = highpass(pos, C.VD_HIGHPASS_HZ, fs, padlen=pad)
     return pos * 1000.0
 
 
